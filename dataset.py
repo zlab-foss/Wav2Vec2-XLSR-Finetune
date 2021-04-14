@@ -109,7 +109,7 @@ def speech_file_to_array_fn(batch):
     return batch
 
 
-def prepare_dataset(batch):
+def prepare_dataset(batch, processor):
     # check that all files have the correct sampling rate
     assert (
         len(set(batch["sampling_rate"])) == 1
@@ -124,7 +124,7 @@ def prepare_dataset(batch):
 
 
 
-def get_datasets(train_csv_path, test_csv_path, n_jobs=10, min_secs=3, max_secs=20, make_vocab=False):
+def get_datasets(train_csv_path, test_csv_path, processor, n_jobs=10, min_secs=3, max_secs=20, make_vocab=False):
     
     common_voice_train = load_dataset("csv", data_files={"train": train_csv_path}, delimiter="\t")["train"]
     common_voice_test = load_dataset("csv", data_files={"test": test_csv_path}, delimiter="\t")["test"]
@@ -171,17 +171,19 @@ def get_datasets(train_csv_path, test_csv_path, n_jobs=10, min_secs=3, max_secs=
     
     print(f"Split sizes [BEFORE]: {len(common_voice_train)} train and {len(common_voice_test)} validation.")
     filter_by_duration = lambda batch: min_secs <= batch["duration_in_seconds"] <= max_secs
-    common_voice_train = common_voice_train.filter(filter_by_max_duration, num_proc=4)
+    common_voice_train = common_voice_train.filter(filter_by_duration, num_proc=n_jobs)
     common_voice_test = common_voice_test
-    print(f"Split sizes [AFTER]: {len(_common_voice_train)} train and {len(_common_voice_test)} validation.")
+    print(f"Split sizes [AFTER]: {len(common_voice_train)} train and {len(common_voice_test)} validation.")
     
     
     common_voice_train = common_voice_train.map(prepare_dataset, 
-                                                remove_columns=_common_voice_train.column_names, 
-                                                batch_size=8, num_proc=4, batched=True)
+                                                fn_kwargs={'processor': processor},
+                                                remove_columns=common_voice_train.column_names, 
+                                                batch_size=8, num_proc=n_jobs, batched=True)
     common_voice_test = common_voice_test.map(prepare_dataset, 
-                                              remove_columns=_common_voice_test.column_names, 
-                                              batch_size=8, num_proc=4, batched=True)
+                                              fn_kwargs={'processor': processor},
+                                              remove_columns=common_voice_test.column_names, 
+                                              batch_size=8, num_proc=n_jobs, batched=True)
     
     return common_voice_train, common_voice_test
 
