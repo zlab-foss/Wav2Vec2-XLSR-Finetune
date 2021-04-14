@@ -18,6 +18,7 @@ import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
 from datasets import load_dataset, load_metric
+from transformers import Wav2Vec2Processor
 
 
 chars_to_ignore = [
@@ -132,7 +133,7 @@ def get_datasets(train_csv_path, test_csv_path, n_jobs=10, min_secs=3, max_secs=
     common_voice_train = common_voice_train.map(normalize_batch, 
                                                 fn_kwargs={"chars_to_ignore": chars_to_ignore, 
                                                            "chars_to_mapping": chars_to_mapping})
-    common_voice_test = common_voice_test.map(normalizer, 
+    common_voice_test = common_voice_test.map(normalize_batch, 
                                               fn_kwargs={"chars_to_ignore": chars_to_ignore, 
                                                          "chars_to_mapping": chars_to_mapping})
     
