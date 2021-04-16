@@ -1,4 +1,6 @@
 data/
+logs/
+cache/
 weights/
 runs/
 *.wav
