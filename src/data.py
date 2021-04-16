@@ -1,16 +1,39 @@
 import librosa
+import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import DataLoader, Dataset
 import torch.nn.functional as F
 import pytorch_lightning as pl
 
+
+def display_time(sec):
+    h = int(sec // 3600)
+    m = int((sec - h*3600) // 60)
+    s = int(sec - h*3600 - m*60)
+    return f'{h} hours, {m} minutes, {s} seconds'
     
 
 class CVData(Dataset):
-    def __init__(self, manifest, processor):
+    def __init__(self, manifest, processor, min_dur=None, max_dur=None):
         super().__init__()
-        self.df = pd.read_csv(manifest, delimiter="\t")
+        df = pd.read_csv(manifest)
+        n1 = df.shape[0]
+        d1 = sum(df['duration'])
+        if min_dur is not None:
+            df = df[df['duration'] >= min_dur]
+        if max_dur is not None:
+            df = df[df['duration'] <= max_dur]
+        n2 = df.shape[0]
+        d2 = sum(df['duration'])
+        if n2 < n1:
+            print(f'{n1-n2} samples | {display_time(d1-d2)} were filtered.')
+        if n2 > 0:
+            df = df.sort_values(by=['duration'])
+            self.df = df.reset_index(drop=True)
+        else:
+            raise Exception('no samples')
+            
         self.processor = processor
     
     def __len__(self):
@@ -18,24 +41,27 @@ class CVData(Dataset):
     
     def __getitem__(self, idx):
         samp = self.df.loc[idx]
-        input_values = self.processor(librosa.load(samp['path'], sr=16000)[0], sampling_rate=16000).input_values[0]
+#         input_values = self.processor(librosa.load(samp['path'], sr=16000)[0], sampling_rate=16000).input_values[0]
+        input_values = self.processor(np.load(samp['np_path']), sampling_rate=16000).input_values[0]
         with self.processor.as_target_processor():
             labels = self.processor(samp["sentence"]).input_ids
         return input_values, labels
 
 
 class DataModule(pl.LightningDataModule):
-    def __init__(self, processor, csv_dir, batch_size=4):
+    def __init__(self, processor, csv_dir, min_dur=None, max_dur=None, batch_size=4):
         super().__init__()
         self.processor = processor
         self.csv_dir = csv_dir
+        self.min_dur = min_dur
+        self.max_dur = max_dur
         self.bs = batch_size
     
     def setup(self, stage=None):
-        self.train = CVData(self.csv_dir + 'train.csv', self.processor)
-        self.val = CVData(self.csv_dir + 'test.csv', self.processor)
-        print('num train samples:',len(self.train))
-        print('num val samples:',len(self.val))
+        self.train = CVData(self.csv_dir + 'train.csv', self.processor, self.min_dur, self.max_dur)
+        self.val = CVData(self.csv_dir + 'val.csv', self.processor)
+        print('num train samples:',len(self.train), ' total duration:', display_time(sum(self.train.df['duration'])))
+        print('num val samples:',len(self.val), ' total duration:', display_time(sum(self.train.df['duration'])))
         
 
     def collate(self, inputs):
@@ -67,7 +93,7 @@ class DataModule(pl.LightningDataModule):
     def train_dataloader(self):
         return DataLoader(self.train, 
                           batch_size=self.bs, 
-                          shuffle=True, 
+                          shuffle=False, 
                           pin_memory=True, 
                           num_workers=self.bs, 
                           collate_fn=self.collate)
