@@ -29,7 +29,7 @@ class CVData(Dataset):
         if n2 < n1:
             print(f'{n1-n2} samples | {display_time(d1-d2)} were filtered.')
         if n2 > 0:
-            df = df.sort_values(by=['duration'])
+            df = df.sort_values(by=['duration'], ascending=False)
             self.df = df.reset_index(drop=True)
         else:
             raise Exception('no samples')
@@ -61,7 +61,7 @@ class DataModule(pl.LightningDataModule):
         self.train = CVData(self.csv_dir + 'train.csv', self.processor, self.min_dur, self.max_dur)
         self.val = CVData(self.csv_dir + 'val.csv', self.processor)
         print('num train samples:',len(self.train), ' total duration:', display_time(sum(self.train.df['duration'])))
-        print('num val samples:',len(self.val), ' total duration:', display_time(sum(self.train.df['duration'])))
+        print('num val samples:',len(self.val), ' total duration:', display_time(sum(self.val.df['duration'])))
         
 
     def collate(self, inputs):
@@ -95,7 +95,7 @@ class DataModule(pl.LightningDataModule):
                           batch_size=self.bs, 
                           shuffle=False, 
                           pin_memory=True, 
-                          num_workers=self.bs, 
+                          num_workers=4, 
                           collate_fn=self.collate)
 
     def val_dataloader(self):
@@ -103,5 +103,5 @@ class DataModule(pl.LightningDataModule):
                           batch_size=self.bs, 
                           shuffle=False, 
                           pin_memory=True, 
-                          num_workers=self.bs, 
+                          num_workers=4, 
                           collate_fn=self.collate)

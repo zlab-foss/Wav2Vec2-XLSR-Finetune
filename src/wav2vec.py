@@ -58,6 +58,7 @@ class Wav2vec(pl.LightningModule):
     
     def transcribe(self, file):
         x = self.processor(librosa.load(file, sr=16000)[0], sampling_rate=16000).input_values
+        x = torch.tensor(x).to(self.device).float()
         logits, _ = self.forward(x)
         return self.decode(logits)
     
