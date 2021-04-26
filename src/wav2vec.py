@@ -5,6 +5,7 @@ import torch.nn.functional as F
 import pytorch_lightning as pl
 import editdistance
 import librosa
+from nemo.collections.asr import modules
 from transformers import Wav2Vec2ForCTC, Wav2Vec2Model, AdamW
 
 
@@ -43,6 +44,22 @@ class Wav2vec(pl.LightningModule):
             vocab_size=len(processor.tokenizer.get_vocab())
         )
         self.model.freeze_feature_extractor()
+        
+        
+    def setup_beam_lm(self, n_beams=10, lm_path=None, alpha=0.1, beta=0, n_jobs=5):
+        self.beam_lm = modules.BeamSearchDecoderWithLM(
+            vocab=list(self.processor.tokenizer.get_vocab().keys())[1:],
+            beam_width=n_beams,
+            alpha=alpha, beta=beta,
+            lm_path=lm_path,
+            num_cpus=n_jobs,
+            input_tensor=False
+        )
+        
+    def beam_decode(self, logits):
+        preds = F.softmax(logits, dim=-1).detach().cpu().numpy()
+        preds = np.concatenate([preds[:,:,1:], preds[:,:,:1]], axis=2)
+        return self.beam_lm.forward(log_probs=preds, log_probs_length=None)[0][0][1]
 
     
     def forward(self, input_values, attention_mask=None, labels=None):
@@ -54,26 +71,30 @@ class Wav2vec(pl.LightningModule):
         labels_str = self.processor.batch_decode(labels, group_tokens=False)
         wer = np.mean([calc_wer(hyp, ref) for hyp,ref in zip(preds_str, labels_str)])
         cer = np.mean([calc_cer(hyp, ref) for hyp,ref in zip(preds_str, labels_str)])
-        return wer, cer
+        return wer, cer, labels_str
     
-    def transcribe(self, file):
+    def transcribe(self, file, mode='greedy'):
         x = self.processor(librosa.load(file, sr=16000)[0], sampling_rate=16000).input_values
         x = torch.tensor(x).to(self.device).float()
         logits, _ = self.forward(x)
-        return self.decode(logits)
+        if mode == 'greedy':
+            preds = torch.argmax(logits, dim=-1)
+            return self.decode(preds)[0]
+        return self.beam_decode(logits).replace('|', ' ')
+        
     
-    def decode(self, logits, labels=None):
-        preds = torch.argmax(logits, dim=-1)
+    def decode(self, preds, labels=None):
         preds_str = self.processor.batch_decode(preds)
         if labels is not None:
-            wer, cer = self.compute_metrics(preds_str, labels)
-            return preds_str, wer, cer
+            wer, cer, labels_str = self.compute_metrics(preds_str, labels)
+            return preds_str, labels_str, wer, cer 
         return preds_str
     
     def step(self, batch, mode='train'):
         logits, loss = self.forward(**batch)
+        preds = torch.argmax(logits, dim=-1)
         
-        _, wer, cer = self.decode(logits, batch['labels'])
+        _, _, wer, cer = self.decode(preds, batch['labels'])
         self.log(mode+'_wer', wer)
         self.log(mode+'_cer', cer)
         self.log(mode+'_loss', loss.item())

@@ -27,10 +27,11 @@ class CVData(Dataset):
         n2 = df.shape[0]
         d2 = sum(df['duration'])
         if n2 < n1:
-            print(f'{n1-n2} samples | {display_time(d1-d2)} were filtered.')
+            print(f'{n1-n2} samples with {display_time(d1-d2)} audio were filtered.')
         if n2 > 0:
             df = df.sort_values(by=['duration'], ascending=False)
             self.df = df.reset_index(drop=True)
+            print('num samples:',n2, ' total duration:', display_time(d2))
         else:
             raise Exception('no samples')
             
@@ -46,24 +47,7 @@ class CVData(Dataset):
         with self.processor.as_target_processor():
             labels = self.processor(samp["sentence"]).input_ids
         return input_values, labels
-
-
-class DataModule(pl.LightningDataModule):
-    def __init__(self, processor, csv_dir, min_dur=None, max_dur=None, batch_size=4):
-        super().__init__()
-        self.processor = processor
-        self.csv_dir = csv_dir
-        self.min_dur = min_dur
-        self.max_dur = max_dur
-        self.bs = batch_size
     
-    def setup(self, stage=None):
-        self.train = CVData(self.csv_dir + 'train.csv', self.processor, self.min_dur, self.max_dur)
-        self.val = CVData(self.csv_dir + 'val.csv', self.processor)
-        print('num train samples:',len(self.train), ' total duration:', display_time(sum(self.train.df['duration'])))
-        print('num val samples:',len(self.val), ' total duration:', display_time(sum(self.val.df['duration'])))
-        
-
     def collate(self, inputs):
         input_features = [{"input_values": sample[0]} for sample in inputs]
         batch = self.processor.pad(
@@ -88,6 +72,22 @@ class DataModule(pl.LightningDataModule):
         labels = labels_batch["input_ids"].masked_fill(labels_batch.attention_mask.ne(1), -100)
         batch["labels"] = labels
         return batch
+
+
+class DataModule(pl.LightningDataModule):
+    def __init__(self, processor, csv_dir, min_dur=None, max_dur=None, batch_size=4):
+        super().__init__()
+        self.processor = processor
+        self.csv_dir = csv_dir
+        self.min_dur = min_dur
+        self.max_dur = max_dur
+        self.bs = batch_size
+    
+    def setup(self, stage=None):
+        self.train = CVData(self.csv_dir + 'train.csv', self.processor, self.min_dur, self.max_dur)
+        self.val = CVData(self.csv_dir + 'val.csv', self.processor)
+        print('num train samples:',len(self.train), ' total duration:', display_time(sum(self.train.df['duration'])))
+        print('num val samples:',len(self.val), ' total duration:', display_time(sum(self.val.df['duration'])))
         
 
     def train_dataloader(self):
@@ -96,7 +96,7 @@ class DataModule(pl.LightningDataModule):
                           shuffle=False, 
                           pin_memory=True, 
                           num_workers=4, 
-                          collate_fn=self.collate)
+                          collate_fn=self.train.collate)
 
     def val_dataloader(self):
         return DataLoader(self.val, 
@@ -104,4 +104,4 @@ class DataModule(pl.LightningDataModule):
                           shuffle=False, 
                           pin_memory=True, 
                           num_workers=4, 
-                          collate_fn=self.collate)
+                          collate_fn=self.val.collate)
