@@ -3,7 +3,6 @@ logs/
 cache/
 weights/
 runs/
-*.wav
 __pycache__/
 .ipynb_checkpoints/
 
