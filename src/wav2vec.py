@@ -5,7 +5,6 @@ import torch.nn.functional as F
 import pytorch_lightning as pl
 import editdistance
 import librosa
-from nemo.collections.asr import modules
 from transformers import Wav2Vec2ForCTC, Wav2Vec2Model, AdamW
 
 
@@ -46,20 +45,32 @@ class Wav2vec(pl.LightningModule):
         self.model.freeze_feature_extractor()
         
         
-    def setup_beam_lm(self, n_beams=10, lm_path=None, alpha=0.1, beta=0, n_jobs=5):
-        self.beam_lm = modules.BeamSearchDecoderWithLM(
-            vocab=list(self.processor.tokenizer.get_vocab().keys())[1:],
+    def setup_beam_decoder(self, n_beams=10, lm_path=None, alpha=0.1, beta=0, n_jobs=5):
+        from ctcdecode import CTCBeamDecoder
+        
+        vocab = list(self.processor.tokenizer.get_vocab().keys())
+        vocab[4] = ' '
+        
+        self.beam_decoder = CTCBeamDecoder(
+            vocab,
+            model_path=lm_path,
+            alpha=alpha,
+            beta=beta,
+            cutoff_prob=1.0,
             beam_width=n_beams,
-            alpha=alpha, beta=beta,
-            lm_path=lm_path,
-            num_cpus=n_jobs,
-            input_tensor=False
+            num_processes=n_jobs,
+            blank_id=0,
+            log_probs_input=False
         )
+
         
     def beam_decode(self, logits):
-        preds = F.softmax(logits, dim=-1).detach().cpu().numpy()
-        preds = np.concatenate([preds[:,:,1:], preds[:,:,:1]], axis=2)
-        return self.beam_lm.forward(log_probs=preds, log_probs_length=None)[0][0][1]
+        preds = F.softmax(logits, dim=-1)
+        beam_results, beam_scores, timesteps, out_lens = self.beam_decoder.decode(preds)
+        res = []
+        for beam, out_len in zip(beam_results, out_lens):
+            res += [self.processor.tokenizer.decode(beam[0][:out_len[0]], group_tokens=False)]
+        return res
 
     
     def forward(self, input_values, attention_mask=None, labels=None):
@@ -79,11 +90,11 @@ class Wav2vec(pl.LightningModule):
         logits, _ = self.forward(x)
         if mode == 'greedy':
             preds = torch.argmax(logits, dim=-1)
-            return self.decode(preds)[0]
-        return self.beam_decode(logits).replace('|', ' ')
+            return self.decode_with_metrics(preds)[0]
+        return self.beam_decode(logits)[0]
         
     
-    def decode(self, preds, labels=None):
+    def decode_with_metrics(self, preds, labels=None):
         preds_str = self.processor.batch_decode(preds)
         if labels is not None:
             wer, cer, labels_str = self.compute_metrics(preds_str, labels)
@@ -94,7 +105,7 @@ class Wav2vec(pl.LightningModule):
         logits, loss = self.forward(**batch)
         preds = torch.argmax(logits, dim=-1)
         
-        _, _, wer, cer = self.decode(preds, batch['labels'])
+        _, _, wer, cer = self.decode_with_metrics(preds, batch['labels'])
         self.log(mode+'_wer', wer)
         self.log(mode+'_cer', cer)
         self.log(mode+'_loss', loss.item())
